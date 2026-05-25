@@ -12,9 +12,9 @@ CAR_W, CAR_H = 20, 12
 MAX_SENSOR_LEN = 200
 SENSOR_ANGLES = [-60, -20, 20, 60]   # relative to car heading (degrees)
 NUM_CARS = 40
-MAX_FRAMES_PER_GEN = 2400   # 30 sec at 60 fps → end of generation
+MAX_FRAMES_PER_GEN = 1800   # 30 sec at 60 fps → end of generation
 STAGNATION_LIMIT   = 360    # frames without a new checkpoint → forced respawn
-CHECKPOINT_FILE = "neat-checkpoint-98"
+CHECKPOINT_FILE = ""
 
 # ── colours ──────────────────────────────────────────────────────────────────
 BG        = (30, 30, 40)
@@ -41,71 +41,31 @@ def make_track():
             pts.append((cx + rx * math.cos(a), cy + ry * math.sin(a)))
         return pts
 
-    #outer = [(100,100),(100,500),(500,500),(500,300),(580,300),(580,500),(800,500),(800,300),(1000,300),(1000,100)]
-    #inner = [(200,200),(200,400),(400,400),(400,210),(690,210),(690,400),(710,400),(710,210),(900,210),(900,200)]
-    outer = [
-    (80, 80), (1200, 80), (1200, 220), (980, 220),
-    (980, 310), (1160, 310), (1160, 640), (720, 640),
-    (720, 530), (610, 530), (610, 650), (250, 650),
-    (250, 540), (80, 540), (80, 390), (250, 390),
-    (250, 310), (80, 310)
-    ]
-
-    inner = [
-    (180, 180), (1100, 180), (1100, 120), (180, 120),
-    (180, 210), (350, 210), (350, 490), (180, 490),
-    (180, 440), (350, 440), (350, 550), (510, 550),
-    (510, 430), (820, 430), (820, 540), (1060, 540),
-    (1060, 410), (880, 410), (880, 180)
-    ]
-
+    outer = [(100,100),(100,500),(500,500),(500,300),(580,300),(580,500),(800,500),(800,300),(1000,300),(1000,100)]
+    inner = [(200,200),(200,400),(400,400),(400,210),(690,210),(690,400),(710,400),(710,210),(900,210),(900,200)]
+    
 
     # Ordered gate segments spanning the track width.
     # Driving path (clockwise): top-left → down left corridor →
     #   right along bottom → up the step → right along middle →
     #   up right section → left along top → back to start.
-    #checkpoints = [
-    #    ((100, 300), (200, 300)),    # 0: left corridor going DOWN
-    #    ((100,500),(200,400)),
-    #    ((300, 400), (300, 500)),    # 1: bottom corridor going RIGHT
-    #    ((400, 350), (500, 350)),    # 2: step transition going UP
-    #    ((500, 215), (500, 300)),    # 2: step transition going UP
-    #    ((700,400),(700,500)),
-    #    ((800, 215), (800, 300)),    # 3: middle corridor going RIGHT
-    #    ((900, 200), (1000, 200)),   # 4: right section going UP
-    #    ((800, 100), (800, 200)),    # 4: right section going UP
-    #    ((600, 100), (600, 200)),    # 5: top corridor going LEFT
-    #    ((300, 100), (300, 200)),    # 6: top corridor going LEFT
-    #]
     checkpoints = [
-    ((130, 130), (130, 180)),
-    ((350, 80), (350, 180)),
-    ((650, 80), (650, 180)),
-    ((950, 80), (950, 180)),
-
-    ((1150, 120), (1150, 220)),
-    ((1040, 220), (1040, 310)),
-    ((1060, 310), (1060, 410)),
-
-    ((1110, 410), (1060, 410)),
-    ((1110, 540), (1060, 540)),
-    ((920, 590), (920, 540)),
-    ((760, 590), (760, 540)),
-
-    ((670, 585), (720, 585)),
-    ((610, 590), (510, 590)),
-    ((430, 600), (430, 550)),
-    ((300, 600), (300, 550)),
-
-    ((130, 500), (180, 500)),
-    ((130, 440), (180, 440)),
-    ((300, 400), (350, 400)),
-    ((300, 310), (350, 310)),
-    ((180, 260), (180, 310)),
+        ((100, 300), (200, 300)),    # 0: left corridor going DOWN
+        ((100,500),(200,400)),
+        ((300, 400), (300, 500)),    # 1: bottom corridor going RIGHT
+        ((400, 350), (500, 350)),    # 2: step transition going UP
+        ((500, 215), (500, 300)),
+        ((700,400),(700,500)),    # 2: step transition going UP
+        ((800, 215), (800, 300)),    # 3: middle corridor going RIGHT
+        ((900, 200), (1000, 200)),   # 4: right section going UP
+        ((800, 100), (800, 200)),    # 4: right section going UP
+        ((600, 100), (600, 200)),    # 5: top corridor going LEFT
+        ((300, 100), (300, 200)),    # 6: top corridor going LEFT
     ]
+
     # Start ABOVE CP0 (y=300) heading DOWN — no free checkpoint on respawn
-    start_pos = (130, 130)
-    start_angle = 0.0
+    start_pos = (150, 200)
+    start_angle = 90.0
     return outer, inner, checkpoints, start_pos, start_angle
 
 
@@ -234,20 +194,14 @@ class Car:
         self.next_cp       = 0   # index of next checkpoint to collect
         self.respawns      = 0
         self.frames_since_cp = 0  # stagnation counter
+        self.alive  = True
         self._prev    = (float(x), float(y))
         self.sensor_hits = [(x, y)] * len(SENSOR_ANGLES)
         self.sensor_dists = [MAX_SENSOR_LEN] * len(SENSOR_ANGLES)
 
-    def _respawn(self):
-        self.x, self.y, self.angle = self._sx, self._sy, self._sa
-        self.speed = 3.0
-        self.respawns += 1
-        self.frames_since_cp = 0
-        self._prev = (self._sx, self._sy)
-        self.sensor_hits  = [(self._sx, self._sy)] * len(SENSOR_ANGLES)
-        self.sensor_dists = [MAX_SENSOR_LEN] * len(SENSOR_ANGLES)
-
     def update(self, net, wall_segs, outer_poly, inner_poly, checkpoints):
+        if not self.alive:
+            return
         # ── sensors first: always correct before network decides ──────────
         for i, rel_angle in enumerate(SENSOR_ANGLES):
             hx, hy, dist = ray_cast((self.x, self.y), self.angle + rel_angle, wall_segs)
@@ -273,7 +227,7 @@ class Car:
         # ── checkpoint detection ──────────────────────────────────────────
         cp_a, cp_b = checkpoints[self.next_cp]
         if seg_intersect(self._prev, (self.x, self.y), cp_a, cp_b):
-            speed_bonus = max(0, STAGNATION_LIMIT - self.frames_since_cp) * (350 / STAGNATION_LIMIT)
+            speed_bonus = max(0, STAGNATION_LIMIT - self.frames_since_cp) * (1000 / STAGNATION_LIMIT)
             self.cp_fitness += 600 + speed_bonus
             self.cp_count += 1
             self.next_cp = (self.next_cp + 1) % len(checkpoints)
@@ -284,24 +238,26 @@ class Car:
         # checkpoints dominate; frames are a small tiebreaker only
         self.fitness = self.cp_fitness + self.frames * 0.05
 
-        # ── stagnation → respawn ─────────────────────────────────────────
+        # ── stagnation → die ─────────────────────────────────────────────
         if self.frames_since_cp >= STAGNATION_LIMIT:
-            self._respawn()
+            self.alive = False
             return
 
-        # ── collision → respawn ──────────────────────────────────────────
+        # ── collision → die ───────────────────────────────────────────────
         if not car_on_track(self.x, self.y, outer_poly, inner_poly):
-            self.fitness = max(0.0, self.fitness*0.1)
-            self._respawn()
+            self.alive = False
             return
 
     def draw(self, surf, sensor_surf):
         pts = rotated_rect_pts(self.x, self.y, CAR_W, CAR_H, self.angle)
-        draw_aa_polygon(surf, CAR_LIVE, pts)
-        for hit in self.sensor_hits:
-            pygame.draw.line(sensor_surf, SENSOR_COL,
-                             (int(self.x), int(self.y)),
-                             (int(hit[0]), int(hit[1])), 1)
+        if self.alive:
+            draw_aa_polygon(surf, CAR_LIVE, pts)
+            for hit in self.sensor_hits:
+                pygame.draw.line(sensor_surf, SENSOR_COL,
+                                 (int(self.x), int(self.y)),
+                                 (int(hit[0]), int(hit[1])), 1)
+        else:
+            draw_aa_polygon(surf, CAR_DEAD, pts)
 
 
 # ── NEAT eval function ────────────────────────────────────────────────────────
@@ -338,8 +294,11 @@ def run_simulation(genomes, config):
             car.update(net, all_segs, outer, inner, checkpoints)
             genome.fitness = car.fitness
 
-        best_cp      = max(c.cp_count  for c in cars)
-        total_spawns = sum(c.respawns  for c in cars)
+        best_cp    = max(c.cp_count for c in cars)
+        alive_count = sum(c.alive   for c in cars)
+
+        if alive_count == 0:
+            break
 
         # ── draw ─────────────────────────────────────────────────────────
         screen.fill(BG)
@@ -353,7 +312,7 @@ def run_simulation(genomes, config):
 
         # HUD
         screen.blit(font_lg.render(f"Generation: {generation}", True, TEXT_COL), (18, 14))
-        screen.blit(font_sm.render(f"Respawns: {total_spawns}", True, TEXT_COL), (18, 52))
+        screen.blit(font_sm.render(f"Alive: {alive_count}", True, TEXT_COL), (18, 52))
         screen.blit(font_sm.render(f"Best CP: {best_cp}", True, CP_COL), (18, 76))
 
         pygame.display.flip()
