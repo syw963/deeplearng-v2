@@ -12,6 +12,8 @@ CAR_W, CAR_H = 20, 12
 MAX_SENSOR_LEN = 300
 SENSOR_ANGLES = [-90, -45, 0, 45, 90]   # relative to car heading (degrees)
 NUM_CARS = 30
+MAX_FRAMES_PER_GEN = 5400   # 90 sec at 60 fps → end of generation
+STAGNATION_LIMIT   = 300    # frames without a new checkpoint → forced respawn
 
 # ── colours ──────────────────────────────────────────────────────────────────
 BG        = (30, 30, 40)
@@ -55,7 +57,7 @@ def make_track():
         ((300, 110), (300, 195)),    # 6: top corridor going LEFT
     ]
 
-    start_pos = (150, 150)
+    start_pos = (150, 300)
     start_angle = 180.0
     return outer, inner, checkpoints, start_pos, start_angle
 
@@ -171,23 +173,33 @@ def rotated_rect_pts(cx, cy, w, h, angle_deg):
 
 class Car:
     def __init__(self, x, y, angle):
+        self._sx = float(x)    # spawn x
+        self._sy = float(y)    # spawn y
+        self._sa = float(angle)
         self.x = float(x)
         self.y = float(y)
         self.angle = float(angle)   # degrees; 0 = right, 90 = down
-        self.speed = 8.0
-        self.alive = True
+        self.speed = 3.0
         self.fitness = 0.0
         self.frames = 0
-        self.cp_count = 0    # total checkpoints crossed (cumulative)
-        self.next_cp  = 0    # index of next checkpoint to collect
+        self.cp_count      = 0   # total checkpoints crossed (cumulative)
+        self.next_cp       = 0   # index of next checkpoint to collect
+        self.respawns      = 0
+        self.frames_since_cp = 0  # stagnation counter
         self._prev    = (float(x), float(y))
         self.sensor_hits = [(x, y)] * 5
         self.sensor_dists = [MAX_SENSOR_LEN] * 5
 
-    def update(self, net, wall_segs, outer_poly, inner_poly, checkpoints):
-        if not self.alive:
-            return
+    def _respawn(self):
+        self.x, self.y, self.angle = self._sx, self._sy, self._sa
+        self.speed = 3.0
+        self.respawns += 1
+        self.frames_since_cp = 0
+        self._prev = (self._sx, self._sy)
+        self.sensor_hits  = [(self._sx, self._sy)] * 5
+        self.sensor_dists = [MAX_SENSOR_LEN] * 5
 
+    def update(self, net, wall_segs, outer_poly, inner_poly, checkpoints):
         self._prev = (self.x, self.y)
 
         # ── neural-net inference ──────────────────────────────────────────
@@ -209,13 +221,21 @@ class Car:
         if seg_intersect(self._prev, (self.x, self.y), cp_a, cp_b):
             self.cp_count += 1
             self.next_cp = (self.next_cp + 1) % len(checkpoints)
+            self.frames_since_cp = 0
+        else:
+            self.frames_since_cp += 1
 
-        # checkpoints dominate; frames break ties within same cp count
-        self.fitness = self.cp_count * 500 + self.frames * 0.1
+        # checkpoints dominate; frames are a small tiebreaker only
+        self.fitness = self.cp_count * 500 + self.frames * 0.01
 
-        # ── collision ────────────────────────────────────────────────────
+        # ── stagnation → respawn ─────────────────────────────────────────
+        if self.frames_since_cp >= STAGNATION_LIMIT:
+            self._respawn()
+            return
+
+        # ── collision → respawn ──────────────────────────────────────────
         if not car_on_track(self.x, self.y, outer_poly, inner_poly):
-            self.alive = False
+            self._respawn()
             return
 
         # ── sensors ──────────────────────────────────────────────────────
@@ -226,18 +246,15 @@ class Car:
             self.sensor_dists[i] = dist
 
     def draw(self, surf):
-        color = CAR_LIVE if self.alive else CAR_DEAD
         pts = rotated_rect_pts(self.x, self.y, CAR_W, CAR_H, self.angle)
-        draw_aa_polygon(surf, color, pts)
+        draw_aa_polygon(surf, CAR_LIVE, pts)
 
-        if self.alive:
-            # draw sensors with alpha via a temp surface
-            sensor_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            for hit in self.sensor_hits:
-                pygame.draw.line(sensor_surf, SENSOR_COL,
-                                 (int(self.x), int(self.y)),
-                                 (int(hit[0]), int(hit[1])), 1)
-            surf.blit(sensor_surf, (0, 0))
+        sensor_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        for hit in self.sensor_hits:
+            pygame.draw.line(sensor_surf, SENSOR_COL,
+                             (int(self.x), int(self.y)),
+                             (int(hit[0]), int(hit[1])), 1)
+        surf.blit(sensor_surf, (0, 0))
 
 
 # ── NEAT eval function ────────────────────────────────────────────────────────
@@ -263,9 +280,10 @@ def run_simulation(genomes, config):
             car.sensor_hits[i] = (hx, hy)
             car.sensor_dists[i] = dist
 
-    running = True
-    while running:
+    gen_frame = 0
+    while gen_frame < MAX_FRAMES_PER_GEN:
         clock.tick(FPS)
+        gen_frame += 1
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -273,16 +291,13 @@ def run_simulation(genomes, config):
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 pygame.quit(); sys.exit()
 
-        alive_count = sum(1 for c in cars if c.alive)
-        if alive_count == 0:
-            break
-
         # ── update ───────────────────────────────────────────────────────
         for net, car, (_, genome) in zip(nets, cars, genomes):
             car.update(net, all_segs, outer, inner, checkpoints)
             genome.fitness = car.fitness
 
-        best_cp = max(c.cp_count for c in cars)
+        best_cp      = max(c.cp_count  for c in cars)
+        total_spawns = sum(c.respawns  for c in cars)
 
         # ── draw ─────────────────────────────────────────────────────────
         screen.fill(BG)
@@ -294,7 +309,7 @@ def run_simulation(genomes, config):
 
         # HUD
         screen.blit(font_lg.render(f"Generation: {generation}", True, TEXT_COL), (18, 14))
-        screen.blit(font_sm.render(f"Alive: {alive_count} / {NUM_CARS}", True, TEXT_COL), (18, 52))
+        screen.blit(font_sm.render(f"Respawns: {total_spawns}", True, TEXT_COL), (18, 52))
         screen.blit(font_sm.render(f"Best CP: {best_cp}", True, CP_COL), (18, 76))
 
         pygame.display.flip()
