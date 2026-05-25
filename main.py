@@ -10,10 +10,11 @@ WIDTH, HEIGHT = 1280, 720
 FPS = 60
 CAR_W, CAR_H = 20, 12
 MAX_SENSOR_LEN = 200
-SENSOR_ANGLES = [-70, -30, 0, 30, 70]   # relative to car heading (degrees)
+SENSOR_ANGLES = [-60, -20, 20, 60]   # relative to car heading (degrees)
 NUM_CARS = 40
 MAX_FRAMES_PER_GEN = 2400   # 30 sec at 60 fps → end of generation
 STAGNATION_LIMIT   = 360    # frames without a new checkpoint → forced respawn
+CHECKPOINT_FILE = "neat-checkpoint-98"
 
 # ── colours ──────────────────────────────────────────────────────────────────
 BG        = (30, 30, 40)
@@ -40,29 +41,71 @@ def make_track():
             pts.append((cx + rx * math.cos(a), cy + ry * math.sin(a)))
         return pts
 
-    outer = [(100,100),(100,500),(500,500),(500,300),(1000,300),(1000,100)]
-    inner = [(200,200),(200,400),(400,400),(400,210),(900,210),(900,200)]
+    #outer = [(100,100),(100,500),(500,500),(500,300),(580,300),(580,500),(800,500),(800,300),(1000,300),(1000,100)]
+    #inner = [(200,200),(200,400),(400,400),(400,210),(690,210),(690,400),(710,400),(710,210),(900,210),(900,200)]
+    outer = [
+    (80, 80), (1200, 80), (1200, 220), (980, 220),
+    (980, 310), (1160, 310), (1160, 640), (720, 640),
+    (720, 530), (610, 530), (610, 650), (250, 650),
+    (250, 540), (80, 540), (80, 390), (250, 390),
+    (250, 310), (80, 310)
+    ]
+
+    inner = [
+    (180, 180), (1100, 180), (1100, 120), (180, 120),
+    (180, 210), (350, 210), (350, 490), (180, 490),
+    (180, 440), (350, 440), (350, 550), (510, 550),
+    (510, 430), (820, 430), (820, 540), (1060, 540),
+    (1060, 410), (880, 410), (880, 180)
+    ]
+
 
     # Ordered gate segments spanning the track width.
     # Driving path (clockwise): top-left → down left corridor →
     #   right along bottom → up the step → right along middle →
     #   up right section → left along top → back to start.
+    #checkpoints = [
+    #    ((100, 300), (200, 300)),    # 0: left corridor going DOWN
+    #    ((100,500),(200,400)),
+    #    ((300, 400), (300, 500)),    # 1: bottom corridor going RIGHT
+    #    ((400, 350), (500, 350)),    # 2: step transition going UP
+    #    ((500, 215), (500, 300)),    # 2: step transition going UP
+    #    ((700,400),(700,500)),
+    #    ((800, 215), (800, 300)),    # 3: middle corridor going RIGHT
+    #    ((900, 200), (1000, 200)),   # 4: right section going UP
+    #    ((800, 100), (800, 200)),    # 4: right section going UP
+    #    ((600, 100), (600, 200)),    # 5: top corridor going LEFT
+    #    ((300, 100), (300, 200)),    # 6: top corridor going LEFT
+    #]
     checkpoints = [
-        ((100, 300), (200, 300)),    # 0: left corridor going DOWN
-        ((100,500),(200,400)),
-        ((300, 400), (300, 500)),    # 1: bottom corridor going RIGHT
-        ((400, 350), (500, 350)),    # 2: step transition going UP
-        ((500, 215), (500, 300)),    # 2: step transition going UP
-        ((800, 215), (800, 300)),    # 3: middle corridor going RIGHT
-        ((900, 200), (1000, 200)),   # 4: right section going UP
-        ((800, 100), (800, 200)),    # 4: right section going UP
-        ((600, 100), (600, 200)),    # 5: top corridor going LEFT
-        ((300, 100), (300, 200)),    # 6: top corridor going LEFT
-    ]
+    ((130, 130), (130, 180)),
+    ((350, 80), (350, 180)),
+    ((650, 80), (650, 180)),
+    ((950, 80), (950, 180)),
 
+    ((1150, 120), (1150, 220)),
+    ((1040, 220), (1040, 310)),
+    ((1060, 310), (1060, 410)),
+
+    ((1110, 410), (1060, 410)),
+    ((1110, 540), (1060, 540)),
+    ((920, 590), (920, 540)),
+    ((760, 590), (760, 540)),
+
+    ((670, 585), (720, 585)),
+    ((610, 590), (510, 590)),
+    ((430, 600), (430, 550)),
+    ((300, 600), (300, 550)),
+
+    ((130, 500), (180, 500)),
+    ((130, 440), (180, 440)),
+    ((300, 400), (350, 400)),
+    ((300, 310), (350, 310)),
+    ((180, 260), (180, 310)),
+    ]
     # Start ABOVE CP0 (y=300) heading DOWN — no free checkpoint on respawn
-    start_pos = (150, 250)
-    start_angle = 90.0
+    start_pos = (130, 130)
+    start_angle = 0.0
     return outer, inner, checkpoints, start_pos, start_angle
 
 
@@ -192,8 +235,8 @@ class Car:
         self.respawns      = 0
         self.frames_since_cp = 0  # stagnation counter
         self._prev    = (float(x), float(y))
-        self.sensor_hits = [(x, y)] * 5
-        self.sensor_dists = [MAX_SENSOR_LEN] * 5
+        self.sensor_hits = [(x, y)] * len(SENSOR_ANGLES)
+        self.sensor_dists = [MAX_SENSOR_LEN] * len(SENSOR_ANGLES)
 
     def _respawn(self):
         self.x, self.y, self.angle = self._sx, self._sy, self._sa
@@ -201,8 +244,8 @@ class Car:
         self.respawns += 1
         self.frames_since_cp = 0
         self._prev = (self._sx, self._sy)
-        self.sensor_hits  = [(self._sx, self._sy)] * 5
-        self.sensor_dists = [MAX_SENSOR_LEN] * 5
+        self.sensor_hits  = [(self._sx, self._sy)] * len(SENSOR_ANGLES)
+        self.sensor_dists = [MAX_SENSOR_LEN] * len(SENSOR_ANGLES)
 
     def update(self, net, wall_segs, outer_poly, inner_poly, checkpoints):
         # ── sensors first: always correct before network decides ──────────
@@ -248,8 +291,8 @@ class Car:
 
         # ── collision → respawn ──────────────────────────────────────────
         if not car_on_track(self.x, self.y, outer_poly, inner_poly):
-            self.fitness = max(0.0, self.fitness - 300)
-            self._respawn
+            self.fitness = max(0.0, self.fitness*0.1)
+            self._respawn()
             return
 
     def draw(self, surf, sensor_surf):
@@ -341,9 +384,14 @@ def main():
         config_path,
     )
 
-    pop = neat.Population(config)
+    if CHECKPOINT_FILE:
+        pop = neat.Checkpointer.restore_checkpoint(CHECKPOINT_FILE)
+        pop.config = config   # 트랙 바꿨을 때 config 갱신
+    else:
+        pop = neat.Population(config)
     pop.add_reporter(neat.StdOutReporter(True))
     pop.add_reporter(neat.StatisticsReporter())
+    pop.add_reporter(neat.Checkpointer(5))
 
     pop.run(run_simulation, 1000)
 
