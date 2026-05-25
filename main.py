@@ -9,11 +9,11 @@ import sys
 WIDTH, HEIGHT = 1280, 720
 FPS = 60
 CAR_W, CAR_H = 20, 12
-MAX_SENSOR_LEN = 300
-SENSOR_ANGLES = [-90, -45, 0, 45, 90]   # relative to car heading (degrees)
-NUM_CARS = 30
-MAX_FRAMES_PER_GEN = 1800   # 30 sec at 60 fps → end of generation
-STAGNATION_LIMIT   = 180    # frames without a new checkpoint → forced respawn
+MAX_SENSOR_LEN = 200
+SENSOR_ANGLES = [-70, -30, 0, 30, 70]   # relative to car heading (degrees)
+NUM_CARS = 40
+MAX_FRAMES_PER_GEN = 2400   # 30 sec at 60 fps → end of generation
+STAGNATION_LIMIT   = 360    # frames without a new checkpoint → forced respawn
 
 # ── colours ──────────────────────────────────────────────────────────────────
 BG        = (30, 30, 40)
@@ -49,12 +49,15 @@ def make_track():
     #   up right section → left along top → back to start.
     checkpoints = [
         ((100, 300), (200, 300)),    # 0: left corridor going DOWN
-        ((300, 430), (300, 500)),    # 1: bottom corridor going RIGHT
-        ((440, 350), (500, 350)),    # 2: step transition going UP
-        ((700, 215), (700, 295)),    # 3: middle corridor going RIGHT
-        ((900, 175), (1000, 175)),   # 4: right section going UP
-        ((600, 110), (600, 195)),    # 5: top corridor going LEFT
-        ((300, 110), (300, 195)),    # 6: top corridor going LEFT
+        ((100,500),(200,400)),
+        ((300, 400), (300, 500)),    # 1: bottom corridor going RIGHT
+        ((400, 350), (500, 350)),    # 2: step transition going UP
+        ((500, 215), (500, 300)),    # 2: step transition going UP
+        ((800, 215), (800, 300)),    # 3: middle corridor going RIGHT
+        ((900, 200), (1000, 200)),   # 4: right section going UP
+        ((800, 100), (800, 200)),    # 4: right section going UP
+        ((600, 100), (600, 200)),    # 5: top corridor going LEFT
+        ((300, 100), (300, 200)),    # 6: top corridor going LEFT
     ]
 
     # Start ABOVE CP0 (y=300) heading DOWN — no free checkpoint on respawn
@@ -181,7 +184,8 @@ class Car:
         self.y = float(y)
         self.angle = float(angle)   # degrees; 0 = right, 90 = down
         self.speed = 3.0
-        self.fitness = 0.0
+        self.fitness = 100.0
+        self.cp_fitness=0.0
         self.frames = 0
         self.cp_count      = 0   # total checkpoints crossed (cumulative)
         self.next_cp       = 0   # index of next checkpoint to collect
@@ -214,9 +218,9 @@ class Car:
         self._prev = (self.x, self.y)
 
         # steer ∈ (-1,1) tanh → max ±4 deg/frame
-        self.angle += steer * 4.0
+        self.angle += steer * 3.0
         # accel ∈ (-1,1) → speed 1..6
-        self.speed = max(1.0, min(6.0, self.speed + accel * 0.5))
+        self.speed = max(2.0, min(7.0, self.speed + accel * 0.8))
 
         rad = math.radians(self.angle)
         self.x += self.speed * math.cos(rad)
@@ -226,6 +230,8 @@ class Car:
         # ── checkpoint detection ──────────────────────────────────────────
         cp_a, cp_b = checkpoints[self.next_cp]
         if seg_intersect(self._prev, (self.x, self.y), cp_a, cp_b):
+            speed_bonus = max(0, STAGNATION_LIMIT - self.frames_since_cp) * (350 / STAGNATION_LIMIT)
+            self.cp_fitness += 600 + speed_bonus
             self.cp_count += 1
             self.next_cp = (self.next_cp + 1) % len(checkpoints)
             self.frames_since_cp = 0
@@ -233,7 +239,7 @@ class Car:
             self.frames_since_cp += 1
 
         # checkpoints dominate; frames are a small tiebreaker only
-        self.fitness = self.cp_count * 500 + self.frames * 0.01
+        self.fitness = self.cp_fitness + self.frames * 0.05
 
         # ── stagnation → respawn ─────────────────────────────────────────
         if self.frames_since_cp >= STAGNATION_LIMIT:
@@ -242,7 +248,8 @@ class Car:
 
         # ── collision → respawn ──────────────────────────────────────────
         if not car_on_track(self.x, self.y, outer_poly, inner_poly):
-            self._respawn()
+            self.fitness = max(0.0, self.fitness - 300)
+            self._respawn
             return
 
     def draw(self, surf, sensor_surf):
