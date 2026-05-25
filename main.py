@@ -12,8 +12,8 @@ CAR_W, CAR_H = 20, 12
 MAX_SENSOR_LEN = 300
 SENSOR_ANGLES = [-90, -45, 0, 45, 90]   # relative to car heading (degrees)
 NUM_CARS = 30
-MAX_FRAMES_PER_GEN = 5400   # 90 sec at 60 fps → end of generation
-STAGNATION_LIMIT   = 300    # frames without a new checkpoint → forced respawn
+MAX_FRAMES_PER_GEN = 1800   # 30 sec at 60 fps → end of generation
+STAGNATION_LIMIT   = 180    # frames without a new checkpoint → forced respawn
 
 # ── colours ──────────────────────────────────────────────────────────────────
 BG        = (30, 30, 40)
@@ -57,8 +57,9 @@ def make_track():
         ((300, 110), (300, 195)),    # 6: top corridor going LEFT
     ]
 
-    start_pos = (150, 300)
-    start_angle = 180.0
+    # Start ABOVE CP0 (y=300) heading DOWN — no free checkpoint on respawn
+    start_pos = (150, 250)
+    start_angle = 90.0
     return outer, inner, checkpoints, start_pos, start_angle
 
 
@@ -200,11 +201,17 @@ class Car:
         self.sensor_dists = [MAX_SENSOR_LEN] * 5
 
     def update(self, net, wall_segs, outer_poly, inner_poly, checkpoints):
-        self._prev = (self.x, self.y)
+        # ── sensors first: always correct before network decides ──────────
+        for i, rel_angle in enumerate(SENSOR_ANGLES):
+            hx, hy, dist = ray_cast((self.x, self.y), self.angle + rel_angle, wall_segs)
+            self.sensor_hits[i] = (hx, hy)
+            self.sensor_dists[i] = dist
 
         # ── neural-net inference ──────────────────────────────────────────
         inputs = [d / MAX_SENSOR_LEN for d in self.sensor_dists]
         steer, accel = net.activate(inputs)
+
+        self._prev = (self.x, self.y)
 
         # steer ∈ (-1,1) tanh → max ±4 deg/frame
         self.angle += steer * 4.0
@@ -238,23 +245,13 @@ class Car:
             self._respawn()
             return
 
-        # ── sensors ──────────────────────────────────────────────────────
-        for i, rel_angle in enumerate(SENSOR_ANGLES):
-            abs_angle = self.angle + rel_angle
-            hx, hy, dist = ray_cast((self.x, self.y), abs_angle, wall_segs)
-            self.sensor_hits[i] = (hx, hy)
-            self.sensor_dists[i] = dist
-
-    def draw(self, surf):
+    def draw(self, surf, sensor_surf):
         pts = rotated_rect_pts(self.x, self.y, CAR_W, CAR_H, self.angle)
         draw_aa_polygon(surf, CAR_LIVE, pts)
-
-        sensor_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         for hit in self.sensor_hits:
             pygame.draw.line(sensor_surf, SENSOR_COL,
                              (int(self.x), int(self.y)),
                              (int(hit[0]), int(hit[1])), 1)
-        surf.blit(sensor_surf, (0, 0))
 
 
 # ── NEAT eval function ────────────────────────────────────────────────────────
@@ -273,12 +270,7 @@ def run_simulation(genomes, config):
         nets.append(net)
         cars.append(Car(*start_pos, start_angle))
 
-    # initial sensor pass
-    for car in cars:
-        for i, rel in enumerate(SENSOR_ANGLES):
-            hx, hy, dist = ray_cast((car.x, car.y), car.angle + rel, all_segs)
-            car.sensor_hits[i] = (hx, hy)
-            car.sensor_dists[i] = dist
+    sensor_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 
     gen_frame = 0
     while gen_frame < MAX_FRAMES_PER_GEN:
@@ -304,8 +296,10 @@ def run_simulation(genomes, config):
         draw_track(screen, outer, inner, TRACK_COL, BORDER_COL)
         draw_checkpoints(screen, checkpoints)
 
+        sensor_surf.fill((0, 0, 0, 0))
         for car in cars:
-            car.draw(screen)
+            car.draw(screen, sensor_surf)
+        screen.blit(sensor_surf, (0, 0))
 
         # HUD
         screen.blit(font_lg.render(f"Generation: {generation}", True, TEXT_COL), (18, 14))
