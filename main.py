@@ -9,12 +9,12 @@ import sys
 WIDTH, HEIGHT = 1280, 720
 FPS = 60
 CAR_W, CAR_H = 20, 12
-MAX_SENSOR_LEN = 200
+MAX_SENSOR_LEN = 250
 SENSOR_ANGLES = [-60, -20, 20, 60]   # relative to car heading (degrees)
 NUM_CARS = 50
 MAX_FRAMES_PER_GEN = 1800   # 30 sec at 60 fps → end of generation
 STAGNATION_LIMIT   = 360    # frames without a new checkpoint → forced respawn
-CHECKPOINT_FILE = "neat-checkpoint-16"
+CHECKPOINT_FILE = ""
 
 # ── colours ──────────────────────────────────────────────────────────────────
 BG        = (30, 30, 40)
@@ -41,7 +41,7 @@ def make_track():
             pts.append((cx + rx * math.cos(a), cy + ry * math.sin(a)))
         return pts
 
-    outer = [(100,100),(100,500),(500,500),(500,300),(580,300),(580,450),(800,450),(800,300),(950,300),(950,100)]
+    outer = [(150,150),(100,500),(500,500),(500,300),(580,300),(580,650),(800,650),(800,250),(950,250),(950,100)]
     inner = [(200,200),(200,400),(400,400),(400,250),(690,250),(690,400),(710,400),(710,210),(900,210),(900,200)]
     
 
@@ -55,7 +55,7 @@ def make_track():
         ((300, 400), (300, 500)),    # 1: bottom corridor going RIGHT
         ((400, 350), (500, 350)),    # 2: step transition going UP
         ((500, 215), (500, 300)),
-        ((700,400),(700,500)),    # 2: step transition going UP
+        ((700,400),(700,700)),    # 2: step transition going UP
         ((800, 215), (800, 300)),    # 3: middle corridor going RIGHT
         ((900, 200), (1000, 200)),   # 4: right section going UP
         ((800, 100), (800, 200)),    # 4: right section going UP
@@ -64,7 +64,7 @@ def make_track():
     ]
 
     # Start ABOVE CP0 (y=300) heading DOWN — no free checkpoint on respawn
-    start_pos = (150, 200)
+    start_pos = (180, 200)
     start_angle = 90.0
     return outer, inner, checkpoints, start_pos, start_angle
 
@@ -215,9 +215,9 @@ class Car:
         self._prev = (self.x, self.y)
 
         # steer ∈ (-1,1) tanh → max ±4 deg/frame
-        self.angle += steer * 3.0
+        self.angle += steer * 5.0
         # accel ∈ (-1,1) → speed 1..6
-        self.speed = max(2.0, min(9.0, self.speed + accel * 0.8))
+        self.speed = max(2.0, min(12.0, self.speed + accel * 0.8))
 
         rad = math.radians(self.angle)
         self.x += self.speed * math.cos(rad)
