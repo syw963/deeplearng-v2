@@ -11,10 +11,10 @@ FPS = 60
 CAR_W, CAR_H = 20, 12
 MAX_SENSOR_LEN = 200
 SENSOR_ANGLES = [-60, -20, 20, 60]   # relative to car heading (degrees)
-NUM_CARS = 40
+NUM_CARS = 50
 MAX_FRAMES_PER_GEN = 1800   # 30 sec at 60 fps → end of generation
 STAGNATION_LIMIT   = 360    # frames without a new checkpoint → forced respawn
-CHECKPOINT_FILE = ""
+CHECKPOINT_FILE = "neat-checkpoint-16"
 
 # ── colours ──────────────────────────────────────────────────────────────────
 BG        = (30, 30, 40)
@@ -41,8 +41,8 @@ def make_track():
             pts.append((cx + rx * math.cos(a), cy + ry * math.sin(a)))
         return pts
 
-    outer = [(100,100),(100,500),(500,500),(500,300),(580,300),(580,500),(800,500),(800,300),(1000,300),(1000,100)]
-    inner = [(200,200),(200,400),(400,400),(400,210),(690,210),(690,400),(710,400),(710,210),(900,210),(900,200)]
+    outer = [(100,100),(100,500),(500,500),(500,300),(580,300),(580,450),(800,450),(800,300),(950,300),(950,100)]
+    inner = [(200,200),(200,400),(400,400),(400,250),(690,250),(690,400),(710,400),(710,210),(900,210),(900,200)]
     
 
     # Ordered gate segments spanning the track width.
@@ -217,7 +217,7 @@ class Car:
         # steer ∈ (-1,1) tanh → max ±4 deg/frame
         self.angle += steer * 3.0
         # accel ∈ (-1,1) → speed 1..6
-        self.speed = max(2.0, min(7.0, self.speed + accel * 0.8))
+        self.speed = max(2.0, min(9.0, self.speed + accel * 0.8))
 
         rad = math.radians(self.angle)
         self.x += self.speed * math.cos(rad)
