@@ -21,13 +21,14 @@ CAR_LIVE  = (100, 220, 120)
 CAR_DEAD  = (80,  80,  90)
 SENSOR_COL= (255, 200,  50, 120)
 TEXT_COL  = (240, 240, 255)
+CP_COL    = (80, 200, 255)
 
 # ── track definition ─────────────────────────────────────────────────────────
 # Each track boundary is a closed polygon (list of (x, y)).
 # We define outer and inner walls of a circuit.
 
 def make_track():
-    """Return (outer_pts, inner_pts, start_pos, start_angle)."""
+    """Return (outer_pts, inner_pts, checkpoints, start_pos, start_angle)."""
     cx, cy = WIDTH // 2, HEIGHT // 2
 
     def ellipse_pts(rx, ry, n=80, cx=cx, cy=cy):
@@ -40,10 +41,23 @@ def make_track():
     outer = [(100,100),(100,500),(500,500),(500,300),(1000,300),(1000,100)]
     inner = [(200,200),(200,400),(400,400),(400,210),(900,210),(900,200)]
 
-    # start on the right side of the track, heading upward (270°)
+    # Ordered gate segments spanning the track width.
+    # Driving path (clockwise): top-left → down left corridor →
+    #   right along bottom → up the step → right along middle →
+    #   up right section → left along top → back to start.
+    checkpoints = [
+        ((100, 300), (200, 300)),    # 0: left corridor going DOWN
+        ((300, 430), (300, 500)),    # 1: bottom corridor going RIGHT
+        ((440, 350), (500, 350)),    # 2: step transition going UP
+        ((700, 215), (700, 295)),    # 3: middle corridor going RIGHT
+        ((900, 175), (1000, 175)),   # 4: right section going UP
+        ((600, 110), (600, 195)),    # 5: top corridor going LEFT
+        ((300, 110), (300, 195)),    # 6: top corridor going LEFT
+    ]
+
     start_pos = (150, 150)
     start_angle = 180.0
-    return outer, inner, start_pos, start_angle
+    return outer, inner, checkpoints, start_pos, start_angle
 
 
 # ── geometry helpers ─────────────────────────────────────────────────────────
@@ -136,6 +150,14 @@ def draw_track(surf, outer, inner, track_col, border_col):
     draw_aa_polyline(surf, border_col, closed_inner, 3)
 
 
+def draw_checkpoints(surf, checkpoints):
+    for i, (a, b) in enumerate(checkpoints):
+        pygame.draw.line(surf, CP_COL,
+                         (int(a[0]), int(a[1])), (int(b[0]), int(b[1])), 2)
+        mx, my = int((a[0] + b[0]) / 2), int((a[1] + b[1]) / 2)
+        surf.blit(_cp_font.render(str(i), True, CP_COL), (mx + 3, my + 3))
+
+
 def rotated_rect_pts(cx, cy, w, h, angle_deg):
     """Return 4 corners of a rotated rectangle."""
     rad = math.radians(angle_deg)
@@ -152,17 +174,21 @@ class Car:
         self.x = float(x)
         self.y = float(y)
         self.angle = float(angle)   # degrees; 0 = right, 90 = down
-        self.speed = 3.0
+        self.speed = 8.0
         self.alive = True
         self.fitness = 0.0
-        self.distance = 0.0
         self.frames = 0
+        self.cp_count = 0    # total checkpoints crossed (cumulative)
+        self.next_cp  = 0    # index of next checkpoint to collect
+        self._prev    = (float(x), float(y))
         self.sensor_hits = [(x, y)] * 5
         self.sensor_dists = [MAX_SENSOR_LEN] * 5
 
-    def update(self, net, wall_segs, outer_poly, inner_poly):
+    def update(self, net, wall_segs, outer_poly, inner_poly, checkpoints):
         if not self.alive:
             return
+
+        self._prev = (self.x, self.y)
 
         # ── neural-net inference ──────────────────────────────────────────
         inputs = [d / MAX_SENSOR_LEN for d in self.sensor_dists]
@@ -174,13 +200,18 @@ class Car:
         self.speed = max(1.0, min(6.0, self.speed + accel * 0.5))
 
         rad = math.radians(self.angle)
-        dx = self.speed * math.cos(rad)
-        dy = self.speed * math.sin(rad)
-        self.x += dx
-        self.y += dy
-        self.distance += self.speed
+        self.x += self.speed * math.cos(rad)
+        self.y += self.speed * math.sin(rad)
         self.frames += 1
-        self.fitness = self.frames * 0.1 + self.distance * 0.9
+
+        # ── checkpoint detection ──────────────────────────────────────────
+        cp_a, cp_b = checkpoints[self.next_cp]
+        if seg_intersect(self._prev, (self.x, self.y), cp_a, cp_b):
+            self.cp_count += 1
+            self.next_cp = (self.next_cp + 1) % len(checkpoints)
+
+        # checkpoints dominate; frames break ties within same cp count
+        self.fitness = self.cp_count * 500 + self.frames * 0.1
 
         # ── collision ────────────────────────────────────────────────────
         if not car_on_track(self.x, self.y, outer_poly, inner_poly):
@@ -215,7 +246,7 @@ def run_simulation(genomes, config):
     global generation, screen, clock, font_lg, font_sm
     generation += 1
 
-    outer, inner, start_pos, start_angle = make_track()
+    outer, inner, checkpoints, start_pos, start_angle = make_track()
     all_segs = poly_segments(outer) + poly_segments(inner)
 
     nets, cars = [], []
@@ -248,21 +279,23 @@ def run_simulation(genomes, config):
 
         # ── update ───────────────────────────────────────────────────────
         for net, car, (_, genome) in zip(nets, cars, genomes):
-            car.update(net, all_segs, outer, inner)
+            car.update(net, all_segs, outer, inner, checkpoints)
             genome.fitness = car.fitness
+
+        best_cp = max(c.cp_count for c in cars)
 
         # ── draw ─────────────────────────────────────────────────────────
         screen.fill(BG)
         draw_track(screen, outer, inner, TRACK_COL, BORDER_COL)
+        draw_checkpoints(screen, checkpoints)
 
         for car in cars:
             car.draw(screen)
 
         # HUD
-        gen_text  = font_lg.render(f"Generation: {generation}", True, TEXT_COL)
-        live_text = font_sm.render(f"Alive: {alive_count} / {NUM_CARS}", True, TEXT_COL)
-        screen.blit(gen_text,  (18, 14))
-        screen.blit(live_text, (18, 52))
+        screen.blit(font_lg.render(f"Generation: {generation}", True, TEXT_COL), (18, 14))
+        screen.blit(font_sm.render(f"Alive: {alive_count} / {NUM_CARS}", True, TEXT_COL), (18, 52))
+        screen.blit(font_sm.render(f"Best CP: {best_cp}", True, CP_COL), (18, 76))
 
         pygame.display.flip()
 
@@ -270,16 +303,18 @@ def run_simulation(genomes, config):
 # ── entry point ───────────────────────────────────────────────────────────────
 
 generation = 0
+_cp_font = None
 
 def main():
-    global screen, clock, font_lg, font_sm
+    global screen, clock, font_lg, font_sm, _cp_font
 
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("NEAT Self-Driving Car Evolution")
     clock = pygame.time.Clock()
-    font_lg = pygame.font.SysFont("Arial", 28, bold=True)
-    font_sm = pygame.font.SysFont("Arial", 20)
+    font_lg  = pygame.font.SysFont("Arial", 28, bold=True)
+    font_sm  = pygame.font.SysFont("Arial", 20)
+    _cp_font = pygame.font.SysFont("Arial", 13)
 
     config_path = os.path.join(os.path.dirname(__file__), "config-feedforward.txt")
     config = neat.config.Config(
